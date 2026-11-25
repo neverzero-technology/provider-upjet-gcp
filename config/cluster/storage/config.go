@@ -34,17 +34,10 @@ func Configure(p *config.Provider) {
 		r.PreviousVersions = []string{"v1beta2"}
 		r.SetCRDStorageVersion("v1beta2")
 		r.ControllerReconcileVersion = "v1beta3" //nolint:staticcheck // still handling the deprecated behavior
-		r.Conversions = []conversion.Conversion{
+		r.Conversions = append([]conversion.Conversion{
 			conversion.NewIdentityConversionExpandPaths("*", "*", conversion.DefaultPathPrefixes(), "retentionPolicy.retentionPeriod"),
 			conversion.NewIdentityConversionExpandPaths("*", "*", conversion.DefaultPathPrefixes(), "retentionPolicy.retentionPeriod"),
-
-			conversion.NewFieldTypeConversion("v1beta2", "v1beta3", "spec.forProvider.retentionPolicy.retentionPeriod", conversion.FloatToString),
-			conversion.NewFieldTypeConversion("v1beta2", "v1beta3", "spec.initProvider.retentionPolicy.retentionPeriod", conversion.FloatToString),
-			conversion.NewFieldTypeConversion("v1beta2", "v1beta3", "status.atProvider.retentionPolicy.retentionPeriod", conversion.FloatToString),
-			conversion.NewFieldTypeConversion("v1beta3", "v1beta2", "spec.forProvider.retentionPolicy.retentionPeriod", conversion.StringToFloat),
-			conversion.NewFieldTypeConversion("v1beta3", "v1beta2", "spec.initProvider.retentionPolicy.retentionPeriod", conversion.StringToFloat),
-			conversion.NewFieldTypeConversion("v1beta3", "v1beta2", "status.atProvider.retentionPolicy.retentionPeriod", conversion.StringToFloat),
-		}
+		}, retentionPeriodConversions()...)
 	})
 
 	p.AddResourceConfigurator("google_storage_bucket_iam_member", func(r *config.Resource) {
@@ -82,4 +75,30 @@ func Configure(p *config.Provider) {
 			TerraformName: "google_storage_bucket",
 		}
 	})
+}
+
+// retentionPeriodConversions convert retentionPolicy.retentionPeriod between
+// the storage version v1beta2, where it is a number, and v1beta3, where it is a
+// string, exactly.
+//
+// The period is a whole number of seconds. FloatToString formats with the
+// shortest 'g' precision, which switches to exponent notation at 1e6 or more
+// (2592000 becomes "2.592e+06"); the Terraform provider then parses the
+// string as an integer, discards the error and sets no retention policy, or
+// fails to lock one that is missing. IntToString and StringToInt keep every
+// whole number exact.
+// See: https://github.com/crossplane-contrib/provider-upjet-gcp/issues/1071
+func retentionPeriodConversions() []conversion.Conversion {
+	paths := []string{
+		"spec.forProvider.retentionPolicy.retentionPeriod",
+		"spec.initProvider.retentionPolicy.retentionPeriod",
+		"status.atProvider.retentionPolicy.retentionPeriod",
+	}
+	out := make([]conversion.Conversion, 0, 2*len(paths))
+	for _, p := range paths {
+		out = append(out,
+			conversion.NewFieldTypeConversion("v1beta2", "v1beta3", p, conversion.IntToString),
+			conversion.NewFieldTypeConversion("v1beta3", "v1beta2", p, conversion.StringToInt))
+	}
+	return out
 }
